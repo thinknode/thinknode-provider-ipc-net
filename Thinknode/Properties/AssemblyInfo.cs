@@ -5,10 +5,10 @@ using System.Runtime.CompilerServices;
 // Change them to the values specific to your project.
 
 [assembly: AssemblyTitle ("Thinknode")]
-[assembly: AssemblyDescription ("")]
+[assembly: AssemblyDescription ("A calculation provider containing the IPC protocol for building a Thinknode app using .NET languages.")]
 [assembly: AssemblyConfiguration ("")]
-[assembly: AssemblyCompany ("")]
-[assembly: AssemblyProduct ("")]
+[assembly: AssemblyCompany ("Thinknode Labs, LLC")]
+[assembly: AssemblyProduct ("Thinknode Provider IPC (.NET)")]
 [assembly: AssemblyCopyright ("kyle")]
 [assembly: AssemblyTrademark ("")]
 [assembly: AssemblyCulture ("")]
