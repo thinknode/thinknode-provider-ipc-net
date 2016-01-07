@@ -9,7 +9,7 @@ using System.Runtime.CompilerServices;
 [assembly: AssemblyConfiguration ("")]
 [assembly: AssemblyCompany ("Thinknode Labs, LLC")]
 [assembly: AssemblyProduct ("Thinknode Provider IPC (.NET)")]
-[assembly: AssemblyCopyright ("kyle")]
+[assembly: AssemblyCopyright ("Copyright (c) 2015 Thinknode Labs, LLC. All rights reserved.")]
 [assembly: AssemblyTrademark ("")]
 [assembly: AssemblyCulture ("")]
 
