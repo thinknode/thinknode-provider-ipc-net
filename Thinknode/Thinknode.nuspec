@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package >
+  <metadata>
+    <id>Thinknode</id>
+    <version>1.0.0</version>
+    <title>Thinknode</title>
+    <authors>Kyle Burnett</authors>
+    <owners>Thinknode Labs, LLC</owners>
+    <licenseUrl>https://github.com/thinknode/thinknode-provider-ipc-net/blob/master/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/thinknode/thinknode-provider-ipc-net</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>A calculation provider containing the IPC protocol for building a Thinknode app using .NET languages.</description>
+    <releaseNotes>Initial version.</releaseNotes>
+    <copyright>Copyright 2016</copyright>
+    <tags>Thinknode</tags>
+    <dependencies>
+      <dependency id="msgpack.cli" version="0.6.0.0" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="bin/Release/Thinknode.dll" target="lib/net45" />
+  </files>
+</package>
