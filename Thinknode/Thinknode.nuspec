@@ -2,7 +2,7 @@
 <package >
   <metadata>
     <id>Thinknode</id>
-    <version>1.0.0</version>
+    <version>1.0.0.4</version>
     <title>Thinknode</title>
     <authors>Kyle Burnett</authors>
     <owners>Thinknode Labs, LLC</owners>
@@ -14,7 +14,7 @@
     <copyright>Copyright 2016</copyright>
     <tags>Thinknode</tags>
     <dependencies>
-      <dependency id="msgpack.cli" version="0.6.0.0" />
+      <dependency id="MsgPack.Cli" version="0.6.7" />
     </dependencies>
   </metadata>
   <files>
