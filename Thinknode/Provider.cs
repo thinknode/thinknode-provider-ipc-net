@@ -40,6 +40,7 @@ namespace Thinknode
 
             // Initialize context.
             context = new SerializationContext();
+            context.SerializationMethod = SerializationMethod.Map;
         }
 
         /// <summary>
