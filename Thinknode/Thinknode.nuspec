@@ -2,7 +2,7 @@
 <package >
   <metadata>
     <id>Thinknode</id>
-    <version>1.0.0.5</version>
+    <version>1.1.0.0</version>
     <title>Thinknode</title>
     <authors>Kyle Burnett</authors>
     <owners>Thinknode Labs, LLC</owners>
@@ -10,7 +10,7 @@
     <projectUrl>https://github.com/thinknode/thinknode-provider-ipc-net</projectUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>A calculation provider containing the IPC protocol for building a Thinknode app using .NET languages.</description>
-    <releaseNotes>Initial version.</releaseNotes>
+    <releaseNotes>Added support for catching and reporting errors in the provider as failures over the IPC channel.</releaseNotes>
     <copyright>Copyright 2016</copyright>
     <tags>Thinknode</tags>
     <dependencies>
