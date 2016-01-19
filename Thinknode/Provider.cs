@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Text;
 using MsgPack.Serialization;
 
@@ -299,6 +300,49 @@ namespace Thinknode
             }
 
             /// <summary>
+            /// Handles provider failures.
+            /// </summary>
+            /// <param name="ex">The exception encountered by the provider.</param>
+            private void HandleFailure(AggregateException ae)
+            {
+                Console.WriteLine("Encountered failure...");
+                Exception ex = ((TargetInvocationException)ae.InnerException).InnerException;
+                string code = ex.GetType().Name;
+                string message = ex.Message;
+
+                // Trim code and message if necessary.
+                if (code.Length > 255)
+                {
+                    code = code.Substring(0, 255);
+                }
+                if (message.Length > 65535)
+                {
+                    message = message.Substring(0, 65535);
+                }
+
+                // Construct byte arrays for pieces of failure request body.
+                byte[] codeLength = { Convert.ToByte(code.Length) };
+                byte[] messageLength = BitConverter.GetBytes(Convert.ToUInt16(message.Length));
+                byte[] codeBytes = Encoding.UTF8.GetBytes(code);
+                byte[] messageBytes = Encoding.UTF8.GetBytes(message);
+
+                // Reverse bytes if we are on little endian system.
+                if (BitConverter.IsLittleEndian)
+                {
+                    Array.Reverse(messageLength);
+                }
+
+                // Compute the total body length.
+                UInt32 bodyLength = Convert.ToUInt32(1 + code.Length + 2 + message.Length);
+
+                // Construct the header and body. Send both together.
+                byte[] header = ConstructHeader(1, Action.Failure, bodyLength);
+                byte[] body = codeLength.Concat(codeBytes).Concat(messageLength).Concat(messageBytes).ToArray();
+                Send(header.Concat(body).ToArray());
+                Console.WriteLine("Reported failure...");
+            }
+
+            /// <summary>
             /// Handles a function request.
             /// </summary>
             /// <param name="message">The message body.</param>
@@ -373,8 +417,9 @@ namespace Thinknode
                         {
                             Console.WriteLine("Received function message...");
                             // Start a new thread to handle the function.
-                            Thread thread = new Thread(new ParameterizedThreadStart(HandleFunction));
-                            thread.Start(message);
+                            Task task = new Task(() => HandleFunction(message));
+                            task.ContinueWith((t) => HandleFailure(t.Exception), TaskContinuationOptions.OnlyOnFaulted);
+                            task.Start();
                             break;
                         }
                     default:
