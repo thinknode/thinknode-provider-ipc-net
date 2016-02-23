@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text;
+using MsgPack;
 using MsgPack.Serialization;
 
 /// <summary>
@@ -16,6 +17,95 @@ using MsgPack.Serialization;
 /// </summary>
 namespace Thinknode
 {
+    /// <summary>
+    /// Built-in datetime serializer.
+    /// </summary>
+    public class DateTimeSerializer : MessagePackSerializer<DateTime>
+    {
+        public DateTimeSerializer(SerializationContext ownerContext) : base(ownerContext) {}
+
+        /// <summary>
+        /// Defines the serialization for the Datetime.
+        /// </summary>
+        /// <param name="packer">Packer.</param>
+        /// <param name="objectTree">Object tree.</param>
+        protected override void PackToCore(Packer packer, DateTime objectTree)
+        {
+            DateTime epoch = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc);
+            double ticks = (TimeZoneInfo.ConvertTimeToUtc(objectTree) - epoch).TotalMilliseconds;
+            byte[] bytes;
+            try
+            {
+                sbyte val = Convert.ToSByte(ticks);
+                bytes = BitConverter.GetBytes(val);
+            }
+            catch (OverflowException)
+            {
+                try
+                {
+                    short val = Convert.ToInt16(ticks);
+                    bytes = BitConverter.GetBytes(val);
+                }
+                catch (OverflowException)
+                {
+                    try
+                    {
+                        int val = Convert.ToInt32(ticks);
+                        bytes = BitConverter.GetBytes(val);
+                    }
+                    catch (OverflowException)
+                    {
+                        long val = Convert.ToInt64(ticks);
+                        bytes = BitConverter.GetBytes(val);
+                    }
+                }
+            }
+            if (BitConverter.IsLittleEndian)
+            {
+                Array.Reverse(bytes);
+            }
+            packer.PackExtendedTypeValue(1, bytes);
+        }
+
+        /// <summary>
+        /// Defines the deserialization for the Datetime.
+        /// </summary>
+        /// <returns>The from core.</returns>
+        /// <param name="unpacker">Unpacker.</param>
+        protected override DateTime UnpackFromCore(Unpacker unpacker)
+        {
+            DateTime epoch = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc);
+            MessagePackObject obj = unpacker.LastReadData;
+            MessagePackExtendedTypeObject ext = obj.AsMessagePackExtendedTypeObject();
+            byte[] bytes = ext.GetBody();
+            if (BitConverter.IsLittleEndian)
+            {
+                Array.Reverse(bytes);
+            }
+            double val;
+            if (bytes.Length == 1)
+            {
+                val = Convert.ToDouble(bytes[0]);
+            }
+            else if (bytes.Length == 2)
+            {
+                val = Convert.ToDouble(BitConverter.ToInt16(bytes, 0));
+            }
+            else if (bytes.Length == 4)
+            {
+                val = Convert.ToDouble(BitConverter.ToInt32(bytes, 0));
+            }
+            else
+            {
+                val = Convert.ToDouble(BitConverter.ToInt64(bytes, 0));
+            }
+            return epoch.AddMilliseconds(val);
+        }
+    }
+
+    public delegate void ProgressDelegate(float prog, string message);
+    public delegate void FailureDelegate(string code, string message);
+
     /// <summary>
     /// An abstract class which may be inherited to create a Thinknode app. The provider handles
     /// IPC between itself and the calculation supervisor. A provider will create a socket connection
@@ -42,6 +132,9 @@ namespace Thinknode
             // Initialize context.
             context = new SerializationContext();
             context.SerializationMethod = SerializationMethod.Map;
+
+            // Add DateTime Serializer
+            context.Serializers.RegisterOverride(new DateTimeSerializer(context));
         }
 
         /// <summary>
@@ -62,6 +155,7 @@ namespace Thinknode
         {
             private Provider provider;
 
+            private static CancellationTokenSource cancelSource;
             private static ManualResetEvent connectDone = new ManualResetEvent(false);
             private static ManualResetEvent sendDone = new ManualResetEvent(false);
 
@@ -300,16 +394,35 @@ namespace Thinknode
             }
 
             /// <summary>
-            /// Handles provider failures.
+            /// Handles aggregate exceptions from the provider.
             /// </summary>
             /// <param name="ex">The exception encountered by the provider.</param>
-            private void HandleFailure(AggregateException ae)
+            private void HandleAggregateException(AggregateException ae)
             {
                 Console.WriteLine("Encountered failure...");
                 Exception ex = ((TargetInvocationException)ae.InnerException).InnerException;
+                HandleException(ex);
+            }
+
+            /// <summary>
+            /// Handles the exception from the provider.
+            /// </summary>
+            /// <param name="ex">The exception.</param>
+            private void HandleException(Exception ex)
+            {
                 string code = ex.GetType().Name;
                 string message = ex.Message;
+                HandleFailure(code, message);
+            }
 
+            /// <summary>
+            /// Handles failure whether reported by the provider or as uncaught exceptions.
+            /// </summary>
+            /// <param name="code">The code string.</param>
+            /// <param name="message">The message string.</param>
+            private void HandleFailure(string code, string message)
+            {
+                Console.WriteLine("Reporting failure...");
                 // Trim code and message if necessary.
                 if (code.Length > 255)
                 {
@@ -340,6 +453,9 @@ namespace Thinknode
                 byte[] body = codeLength.Concat(codeBytes).Concat(messageLength).Concat(messageBytes).ToArray();
                 Send(header.Concat(body).ToArray());
                 Console.WriteLine("Reported failure...");
+
+                // Cancel
+                cancelSource.Cancel();
             }
 
             /// <summary>
@@ -348,55 +464,116 @@ namespace Thinknode
             /// <param name="message">The message body.</param>
             private void HandleFunction(object message)
             {
-                byte[] data = (byte[])message;
+                try {
+                    byte[] data = (byte[])message;
 
-                // Receive the length of the function name.
-                int nameLength = Convert.ToInt32(Buffer.GetByte(data, 0));
+                    // Receive the length of the function name.
+                    int nameLength = Convert.ToInt32(Buffer.GetByte(data, 0));
 
-                // Receive the name of the function.
-                String name = Encoding.UTF8.GetString(data, 1, nameLength);
+                    // Receive the name of the function.
+                    String name = Encoding.UTF8.GetString(data, 1, nameLength);
 
-                // Lookup the method info.
-                MethodInfo methodInfo = provider.GetType().GetMethod(name, BindingFlags.Static | BindingFlags.DeclaredOnly | BindingFlags.Public);
-                if (methodInfo == null)
-                {
-                    throw new InvalidOperationException(String.Format("Public static method {0} not found.", name));
+                    // Receive the number of arguments.
+                    ushort argCount = ToUInt16(data, 1 + nameLength);
+
+                    // Lookup the method info.
+                    MethodInfo methodInfo = provider.GetType().GetMethods(BindingFlags.Static | BindingFlags.DeclaredOnly | BindingFlags.Public)
+                        .Where(m => m.Name == name)
+                        .Where(m =>
+                            {
+                                ParameterInfo[] p = m.GetParameters();
+                                // If the number of parameters is less than the arg count, return false.
+                                if (p.Length == argCount)
+                                {
+                                    return true;
+                                }
+                                else if (p.Length == argCount + 1)
+                                {
+                                    string n = p.Last().ParameterType.FullName;
+                                    if (n == "Thinknode.ProgressDelegate" || n == "Thinknode.FailureDelegate")
+                                    {
+                                        return true;
+                                    }
+                                    else
+                                    {
+                                        return false;
+                                    }
+                                }
+                                else if (p.Length == argCount + 2)
+                                {
+                                    string n1 = p[p.Length - 2].ParameterType.FullName;
+                                    string n2 = p[p.Length - 1].ParameterType.FullName;
+                                    if ((n1 == "Thinknode.ProgressDelegate" && n2 == "Thinknode.FailureDelegate") ||
+                                        (n1 == "Thinknode.FailureDelegate" && n2 == "Thinknode.ProgressDelegate"))
+                                    {
+                                        return true;
+                                    }
+                                    else
+                                    {
+                                        return false;
+                                    }
+                                }
+                                else
+                                {
+                                    return false;
+                                }
+                            })
+                        .First();
+                    if (methodInfo == null)
+                    {
+                        throw new InvalidOperationException(String.Format("Public static method {0} not found.", name));
+                    }
+
+                    // Lookup parameters.
+                    ParameterInfo[] parameters = methodInfo.GetParameters();
+
+                    // Decode arguments.
+                    object[] args = new object[parameters.Length];
+                    int offset = 1 + nameLength + 2;
+                    ushort i;
+                    for (i = 0; i < argCount; ++i)
+                    {
+                        uint argLength = ToUInt32(data, offset);
+                        offset += 4;
+                        byte[] arg = new byte[argLength];
+                        Buffer.BlockCopy(data, offset, arg, 0, (int)argLength);
+                        offset += (int)argLength;
+                        var serializer = MessagePackSerializer.Get(parameters[i].ParameterType, provider.context);
+                        args[i] = serializer.UnpackSingleObject(arg);
+                    }
+
+                    // Optionally add the progress and failure delegates.
+                    string delName;
+                    for (; i < parameters.Length; ++i)
+                    {
+                        delName = parameters[i].ParameterType.FullName;
+                        if (delName == "Thinknode.ProgressDelegate")
+                        {
+                            ProgressDelegate progDel = HandleProgress;
+                            args[i] = progDel;
+                        } else {
+                            FailureDelegate failDel = HandleFailure;
+                            args[i] = failDel;
+                        }
+                    }
+
+                    // Invoke function with arguments from function request message.
+                    var returnSerializer = MessagePackSerializer.Get(methodInfo.ReturnType, provider.context);
+                    byte[] result = returnSerializer.PackSingleObject(methodInfo.Invoke(null, args));
+
+                    // Send result.
+                    uint length = Convert.ToUInt32(result.LongLength);
+                    byte[] header = ConstructHeader(1, Action.Result, length);
+                    Send(header.Concat(result).ToArray());
+                    Console.WriteLine("Completed function...");
+
+                    // Reset source.
+                    cancelSource = null;
                 }
-
-                // Receive the number of arguments.
-                ushort argCount = ToUInt16(data, 1 + nameLength);
-
-                // Lookup parameters.
-                ParameterInfo[] parameters = methodInfo.GetParameters();
-                if (argCount != parameters.Length)
+                catch (Exception ex)
                 {
-                    String msg = "Expected {0} to have {1} arguments; found {2}.";
-                    throw new InvalidOperationException(String.Format(msg, name, argCount, parameters.Length));
+                    HandleException(ex);
                 }
-
-                // Decode arguments.
-                object[] args = new object[argCount];
-                int offset = 1 + nameLength + 2;
-                for (ushort i = 0; i < argCount; ++i)
-                {
-                    uint argLength = ToUInt32(data, offset);
-                    offset += 4;
-                    byte[] arg = new byte[argLength];
-                    Buffer.BlockCopy(data, offset, arg, 0, (int)argLength);
-                    offset += (int)argLength;
-                    var serializer = MessagePackSerializer.Get(parameters[i].ParameterType, provider.context);
-                    args[i] = serializer.UnpackSingleObject(arg);
-                }
-
-                // Invoke function with arguments from function request message.
-                var returnSerializer = MessagePackSerializer.Get(methodInfo.ReturnType, provider.context);
-                byte[] result = returnSerializer.PackSingleObject(methodInfo.Invoke(null, args));
-
-                // Send result.
-                uint length = Convert.ToUInt32(result.LongLength);
-                byte[] header = ConstructHeader(1, Action.Result, length);
-                Send(header.Concat(result).ToArray());
-                Console.WriteLine("Completed function...");
             }
 
             /// <summary>
@@ -417,8 +594,17 @@ namespace Thinknode
                         {
                             Console.WriteLine("Received function message...");
                             // Start a new thread to handle the function.
-                            Task task = new Task(() => HandleFunction(message));
-                            task.ContinueWith((t) => HandleFailure(t.Exception), TaskContinuationOptions.OnlyOnFaulted);
+                            cancelSource = new CancellationTokenSource();
+                            Task task = new Task(() => HandleFunction(message), cancelSource.Token);
+                            task.ContinueWith((t) => HandleAggregateException(t.Exception), TaskContinuationOptions.OnlyOnFaulted);
+                            task.Start();
+                            break;
+                        }
+                    case Action.Ping:
+                        {
+                            Console.WriteLine("Received ping message...");
+                            // Start a new thread to handle the pong response.
+                            Task task = new Task(() => HandlePing(message));
                             task.Start();
                             break;
                         }
@@ -428,6 +614,53 @@ namespace Thinknode
                             throw new InvalidOperationException(msg);
                         }
                 }
+            }
+
+            /// <summary>
+            /// Handles the ping message by responding with a "pong".
+            /// </summary>
+            /// <param name="body">The ping message body to be used in the pong response.</param>
+            private void HandlePing(byte[] body)
+            {
+                byte[] header = ConstructHeader(1, Action.Pong, 32);
+                Send(header.Concat(body).ToArray());
+                Console.WriteLine("Responded to ping message...");
+            }
+
+            /// <summary>
+            /// Handles calculation progress.
+            /// </summary>
+            /// <param name="prog">A floating point number between 0 and 1 representing the calculation's progress.</param>
+            /// <param name="message">The message string.</param>
+            private void HandleProgress(float prog, string message)
+            {
+                Console.WriteLine("Reporting progress...");
+                // Trim message if necessary.
+                if (message.Length > 65535)
+                {
+                    message = message.Substring(0, 65535);
+                }
+
+                // Construct byte arrays for pieces of failure request body.
+                byte[] progressBytes = BitConverter.GetBytes(prog);
+                byte[] messageLength = BitConverter.GetBytes(Convert.ToUInt16(message.Length));
+                byte[] messageBytes = Encoding.UTF8.GetBytes(message);
+
+                // Reverse bytes if we are on little endian system.
+                if (BitConverter.IsLittleEndian)
+                {
+                    Array.Reverse(progressBytes);
+                    Array.Reverse(messageLength);
+                }
+
+                // Compute the total body length.
+                UInt32 bodyLength = Convert.ToUInt32(4 + 2 + message.Length);
+
+                // Construct the header and body. Send both together.
+                byte[] header = ConstructHeader(1, Action.Progress, bodyLength);
+                byte[] body = progressBytes.Concat(messageLength).Concat(messageBytes).ToArray();
+                Send(header.Concat(body).ToArray());
+                Console.WriteLine("Reported progress...");
             }
 
             /// <summary>
@@ -462,6 +695,10 @@ namespace Thinknode
             /// <param name="data">The data to send.</param>
             private void Send(byte[] data)
             {
+                if (cancelSource != null && cancelSource.IsCancellationRequested)
+                {
+                    return;
+                }
                 // Begin sending the data to the remote device.
                 AysnchronousMessage msg = new AysnchronousMessage(sock, data);
                 sock.BeginSend(data, 0, data.Length, 0, new AsyncCallback(SendCallback), msg);
